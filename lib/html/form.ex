@@ -3,11 +3,27 @@ if Code.ensure_loaded?(Phoenix.HTML) && Code.ensure_loaded?(Phoenix.HTML.Form) d
     import Phoenix.HTML, only: [html_escape: 1]
     import Phoenix.HTML.Form, only: [hidden_inputs_for: 1]
 
-    def polymorphic_embed_inputs_for(form, field, type, fun)
-        when is_atom(field) or is_binary(field) do
+    @spec polymorphic_embed_inputs_for(Phoenix.HTML.Form.t(), Phoenix.HTML.Form.field(), atom) :: list(Phoenix.HTML.Form.t())
+    def polymorphic_embed_inputs_for(form, field, type), do: polymorphic_embed_inputs_for(form, field, type, [])
+
+    @spec polymorphic_embed_inputs_for(Phoenix.HTML.Form.t(), Phoenix.HTML.Form.field(), atom, Keyword.t()) :: list(Phoenix.HTML.Form.t())
+    def polymorphic_embed_inputs_for(form, field, type, options)
+        when (is_atom(field) or is_binary(field)) and is_list(options) do
       options =
         form.options
         |> Keyword.take([:multipart])
+        |> Keyword.merge(options)
+
+      to_form(form.source, form, field, type, options)
+    end
+
+    @spec polymorphic_embed_inputs_for(Phoenix.HTML.Form.t(), Phoenix.HTML.Form.field(), atom, Keyword.t(), (Phoenix.HTML.Form.t() -> Phoenix.HTML.unsafe())) :: Phoenix.HTML.safe()
+    def polymorphic_embed_inputs_for(form, field, type, options \\ [], fun)
+        when (is_atom(field) or is_binary(field)) and is_list(options) and is_function(fun) do
+      options =
+        form.options
+        |> Keyword.take([:multipart])
+        |> Keyword.merge(options)
 
       forms = to_form(form.source, form, field, type, options)
 
