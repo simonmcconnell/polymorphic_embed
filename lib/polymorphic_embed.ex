@@ -157,6 +157,9 @@ defmodule PolymorphicEmbed do
       :type_not_found when on_type_not_found == :changeset_error ->
         Ecto.Changeset.add_error(changeset, field, "is invalid")
 
+      :type_not_found when on_type_not_found == :nilify ->
+        Ecto.Changeset.put_change(changeset, field, nil)
+
       struct ->
         embed_changeset = changeset_fun.(struct, params)
 
@@ -197,6 +200,9 @@ defmodule PolymorphicEmbed do
           nil when on_type_not_found == :changeset_error ->
             :error
 
+          nil when on_type_not_found == :ignore ->
+            :ignore
+
           module ->
             embed_changeset = changeset_fun.(struct(module), params)
 
@@ -215,6 +221,8 @@ defmodule PolymorphicEmbed do
     if Enum.any?(embeds, &(&1 == :error)) do
       Ecto.Changeset.add_error(changeset, field, "is invalid")
     else
+      embeds = Enum.filter(embeds, &(&1 != :ignore))
+
       any_invalid? =
         Enum.any?(embeds, fn
           %{valid?: false} -> true
@@ -244,7 +252,11 @@ defmodule PolymorphicEmbed do
   @impl true
   def load(nil, _loader, _params), do: {:ok, nil}
 
-  def load(data, _loader, %{types_metadata: types_metadata, type_field: type_field}) do
+  def load(data, loader, params) when is_map(data), do: do_load(data, loader, params)
+
+  def load(data, loader, params) when is_binary(data), do: do_load(Jason.decode!(data), loader, params)
+
+  def do_load(data, _loader, %{types_metadata: types_metadata, type_field: type_field}) do
     case do_get_polymorphic_module_from_map(data, type_field, types_metadata) do
       nil -> raise_cannot_infer_type_from_data(data)
       module when is_atom(module) -> {:ok, Ecto.embedded_load(module, data, :json)}
@@ -320,6 +332,18 @@ defmodule PolymorphicEmbed do
     |> String.to_atom()
   end
 
+  @doc """
+  Returns the possible types for a given schema and field
+
+  you can call `types/2` like this:
+      PolymorphicEmbed.types(MySchema, :contexts)
+      #=> [:location, :age, :device]
+  """
+  def types(schema, field) do
+    %{types_metadata: types_metadata} = get_field_options(schema, field)
+    Enum.map(types_metadata, &String.to_existing_atom(&1.type))
+  end
+
   defp get_metadata_for_module(module, types_metadata) do
     Enum.find(types_metadata, &(module == &1.module))
   end
@@ -354,6 +378,14 @@ defmodule PolymorphicEmbed do
 
     Ecto.Changeset.traverse_errors(changeset, msg_func)
     |> merge_polymorphic_keys(changes, types, msg_func)
+  end
+
+  # We need to match the case where an invalid changeset has a PolymorphicEmbed field which is valid,
+  # then that PolymorphicEmbed field is already converted to a struct and no longer a changeset.
+  # Since the said field is converted to a struct there's errors to check for.
+  def traverse_errors(%_{}, msg_func)
+      when is_function(msg_func, 1) or is_function(msg_func, 3) do
+    %{}
   end
 
   defp merge_polymorphic_keys(map, changes, types, msg_func) do
